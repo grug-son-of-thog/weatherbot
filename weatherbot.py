@@ -8,6 +8,7 @@ import requests
 import sys
 
 from discord.ext import commands, tasks
+from urllib.request import urlopen
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -46,9 +47,10 @@ def remove_empty_subscription(county_state, data):
 def get_noaa_zone(county, state):
     county = county.upper()
     state = state.upper()
-    with open('zones.dbx', 'r') as file:
-        for line in file:
-            parts = line.strip().split('|')
+    with urlopen('https://www.weather.gov/source/gis/Shapefiles/County/bp08mr23.dbx') as file:
+        for byte_line in file:
+            string_line = byte_line.decode('utf-8')
+            parts = string_line.strip().split('|')
 
             if len(parts) != 11 or parts[0].upper() != state or parts[3].upper() != county:
                 logging.debug('Does not match')
