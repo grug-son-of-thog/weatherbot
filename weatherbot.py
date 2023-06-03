@@ -74,6 +74,13 @@ def get_noaa_zone(county, state):
             return zone_code
     return ''
 
+def add_new_alerts(data, event):
+    if event not in data['alerts']:
+        data['alerts'].append(event)
+        new_alerts.append((event, headline, description))
+    
+    return new_alerts
+
 def remove_existing_alert(data, response_data):
     for existing_alert in data['alerts']:
         if existing_alert not in json.dumps(response_data['features']):
@@ -81,12 +88,30 @@ def remove_existing_alert(data, response_data):
     
     return data
 
-def add_new_alerts(data, event):
-    if event not in data['alerts']:
-        data['alerts'].append(event)
-        new_alerts.append((event, headline, description))
+def get_existing_alerts(county_state):
+    zone = subscriptions[county_state]['county_code']
+    if not zone:
+        return []
     
-    return new_alerts
+    response = requests.get(f'https://api.weather.gov/alerts/active?zone={zone}')
+    
+    if response.status_code != 200:
+        logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
+        return
+    
+    existing_alerts = []
+    response_data = response.json()
+
+    if 'features' not in response_data or len(response_data['features']) <= 0:
+        return existing_alerts
+
+    for feature in response_data['features']:
+        event = feature.get('properties', {}).get('event')
+        headline = feature.get('properties', {}).get('headline')
+        description = feature.get('properties', {}).get('description')
+        existing_alerts.append((event, headline, description))
+
+    return existing_alerts
 
 subscriptions = load_subscriptions()
 
@@ -245,30 +270,5 @@ async def alert_subscribed_users(county_state, new_alerts):
         user = await bot.fetch_user(user_id)
         if user:
             await alert_user(user, county_state, new_alerts)
-
-def get_existing_alerts(county_state):
-    zone = subscriptions[county_state]['county_code']
-    if not zone:
-        return []
-    
-    response = requests.get(f'https://api.weather.gov/alerts/active?zone={zone}')
-    
-    if response.status_code != 200:
-        logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
-        return
-    
-    existing_alerts = []
-    response_data = response.json()
-
-    if 'features' not in response_data or len(response_data['features']) <= 0:
-        return existing_alerts
-
-    for feature in response_data['features']:
-        event = feature.get('properties', {}).get('event')
-        headline = feature.get('properties', {}).get('headline')
-        description = feature.get('properties', {}).get('description')
-        existing_alerts.append((event, headline, description))
-
-    return existing_alerts
 
 bot.run(TOKEN)
