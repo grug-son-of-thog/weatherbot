@@ -46,6 +46,7 @@ def remove_empty_subscription(county_code, data):
         subscriptions.pop(county_code)
 
 def add_new_alerts(data, event):
+    new_alerts = []
     if event not in data['alerts']:
         data['alerts'].append(event)
         new_alerts.append((event, headline, description))
