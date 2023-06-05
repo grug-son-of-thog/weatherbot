@@ -45,12 +45,11 @@ def remove_empty_subscription(county_code, data):
         logging.info(f'{county_code} has no subscribers! Removing...')
         subscriptions.pop(county_code)
 
-def add_new_alerts(data, event, headline, description):
+async def add_new_alerts(data, event, headline, description):
     new_alerts = []
     if event not in data['alerts']:
         data['alerts'].append(event)
         new_alerts.append((event, headline, description))
-    
     return new_alerts
 
 def remove_existing_alert(data, response_data):
@@ -333,10 +332,9 @@ async def check_weather_alerts_for_single_zone(county_code, data):
         headline = feature.get('properties', {}).get('headline')
         description = feature.get('properties', {}).get('description')
         data = remove_existing_alert(data, response_data)
-        new_alerts = add_new_alerts(data, event, headline, description)
-
-    if new_alerts:
-        await alert_subscribed_users(county_code, new_alerts)
+        new_alerts = await add_new_alerts(data, event, headline, description)
+        if new_alerts:
+            await alert_subscribed_users(county_code, new_alerts)
 
     subscriptions[county_code] = data
     save_subscriptions(subscriptions)
