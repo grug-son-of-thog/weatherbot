@@ -267,7 +267,7 @@ async def unsubscribe(ctx, *, location=None):
     matching_subscriptions = []
     
     for county_code, data in subscriptions.items():
-        if data['county'] == county and data['state'] == state and user.id in data['users']:
+        if county in data['county'] and data['state'] == state and user.id in data['users']:
             matching_subscriptions.append(data)
             
     if len(matching_subscriptions) > 1:
