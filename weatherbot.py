@@ -86,6 +86,84 @@ def get_existing_alerts(county_code):
 
     return existing_alerts
 
+async def get_noaa_zone(ctx, county, state):
+    user = ctx.author
+    county = county.upper()
+    state = state.upper()
+    matches = []
+    match = []
+    
+    with urlopen('https://www.weather.gov/source/gis/Shapefiles/County/bp08mr23.dbx') as file:
+        for byte_line in file:
+            string_line = byte_line.decode('utf-8')
+            parts = string_line.strip().split('|')
+
+            if len(parts) != 11 or parts[0].upper() != state or county not in parts[3].upper():
+                logging.debug('Line is either malformed or does not match.')
+                continue
+                
+            matches.append(parts)
+
+        if len(matches) > 10:
+            await ctx.send(f'{user.mention}, too many subzones exist. The maximum allowed is 10')
+            return
+        
+        elif len(matches) > 1:
+            match = await choose_subzone(ctx, matches)
+        
+        else:
+            match = matches[0]
+            
+        if not match:
+            return ['','']
+
+        latitude, longitude = match[9], match[10]
+        url = f'https://api.weather.gov/points/{latitude},{longitude}'
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
+            return
+
+        data = response.json()
+
+        if 'properties' not in data or 'county' not in data['properties']:
+            logging.debug(f'Failed to retrieve county information for {county_state}.')
+
+        county_value = data['properties']['county']
+        zone_code = county_value.split('/')[-1]
+
+        return zone_code, match[3].upper()
+
+    return '', ''
+
+async def choose_subzone(ctx, matches):
+    user = ctx.author
+    option_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "0️⃣"]
+    option_message = f'{user.mention}, multiple matches were found. Please select from the following choices:\n'
+    
+    for i, option in enumerate(matches):
+        option_message += f'{i+1}. {option[3]} County, {option[5]}, {option[0].upper()}, {option[6]}\n'
+
+    sent_message = await ctx.send(option_message)
+
+    for i in range(len(matches)):
+        await sent_message.add_reaction(option_numbers[i])
+
+    def check(reaction, user):
+        return user == ctx.author and reaction.message.id == sent_message.id
+
+    try:
+        reaction, user = await ctx.bot.wait_for('reaction_add', timeout=60, check=check)
+        selected_option_index = option_numbers.index(str(reaction.emoji))
+        selected_option = matches[selected_option_index]
+        return selected_option
+
+    except asyncio.TimeoutError:
+        logging.info(f'{user} (ID: {user.id}) did not respond to choice prompt in time.')
+        await ctx.send(f'{user.mention}, timeout exceeded. Please try again.')
+        return
+
 subscriptions = load_subscriptions()
 
 @bot.event
@@ -256,83 +334,5 @@ async def alert_subscribed_users(county_code, new_alerts):
 
         if user:
             await alert_user(user, subscriptions[county_code]['county'] + ', ' + subscriptions[county_code]['state'], new_alerts)
-
-async def get_noaa_zone(ctx, county, state):
-    user = ctx.author
-    county = county.upper()
-    state = state.upper()
-    matches = []
-    match = []
-    
-    with urlopen('https://www.weather.gov/source/gis/Shapefiles/County/bp08mr23.dbx') as file:
-        for byte_line in file:
-            string_line = byte_line.decode('utf-8')
-            parts = string_line.strip().split('|')
-
-            if len(parts) != 11 or parts[0].upper() != state or county not in parts[3].upper():
-                logging.debug('Line is either malformed or does not match.')
-                continue
-                
-            matches.append(parts)
-
-        if len(matches) > 10:
-            await ctx.send(f'{user.mention}, too many subzones exist. The maximum allowed is 10')
-            return
-        
-        elif len(matches) > 1:
-            match = await choose_subzone(ctx, matches)
-        
-        else:
-            match = matches[0]
-            
-        if not match:
-            return ['','']
-
-        latitude, longitude = match[9], match[10]
-        url = f'https://api.weather.gov/points/{latitude},{longitude}'
-        response = requests.get(url)
-
-        if response.status_code != 200:
-            logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
-            return
-
-        data = response.json()
-
-        if 'properties' not in data or 'county' not in data['properties']:
-            logging.debug(f'Failed to retrieve county information for {county_state}.')
-
-        county_value = data['properties']['county']
-        zone_code = county_value.split('/')[-1]
-
-        return zone_code, match[3].upper()
-
-    return '', ''
-
-async def choose_subzone(ctx, matches):
-    user = ctx.author
-    option_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "0️⃣"]
-    option_message = f'{user.mention}, multiple matches were found. Please select from the following choices:\n'
-    
-    for i, option in enumerate(matches):
-        option_message += f'{i+1}. {option[3]} County, {option[5]}, {option[0].upper()}, {option[6]}\n'
-
-    sent_message = await ctx.send(option_message)
-
-    for i in range(len(matches)):
-        await sent_message.add_reaction(option_numbers[i])
-
-    def check(reaction, user):
-        return user == ctx.author and reaction.message.id == sent_message.id
-
-    try:
-        reaction, user = await ctx.bot.wait_for('reaction_add', timeout=60, check=check)
-        selected_option_index = option_numbers.index(str(reaction.emoji))
-        selected_option = matches[selected_option_index]
-        return selected_option
-
-    except asyncio.TimeoutError:
-        logging.info(f'{user} (ID: {user.id}) did not respond to choice prompt in time.')
-        await ctx.send(f'{user.mention}, timeout exceeded. Please try again.')
-        return
 
 bot.run(TOKEN)
