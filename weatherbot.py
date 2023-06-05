@@ -187,6 +187,7 @@ async def on_ready():
 @bot.command()
 async def subscribe(ctx, *, location=None):
     user = ctx.author
+    new_zones = ''
 
     if location is None:
         logging.info(f'Invalid subscription request received from from {user} (ID: {user.id}).')
@@ -221,6 +222,10 @@ async def subscribe(ctx, *, location=None):
             'users': [],
             'alerts': []
         }
+        new_zone = zone_code
+        existing_alerts = []
+    else:
+        existing_alerts = get_existing_alerts(zone_code)
     
     if user.id in subscriptions[zone_code]['users']:
         logging.info(f'{user} (ID: {user.id}) requested duplicate subscription for {county} COUNTY {state}.')
@@ -228,7 +233,6 @@ async def subscribe(ctx, *, location=None):
         return
 
     subscriptions[zone_code]['users'].append(user.id)
-    existing_alerts = get_existing_alerts(zone_code)
 
     if existing_alerts:
         await alert_user(user, county_state, existing_alerts)
@@ -237,6 +241,9 @@ async def subscribe(ctx, *, location=None):
     await ctx.send(f'{user.mention}, you are now subscribed to alerts for {county} COUNTY, {state}.')
 
     save_subscriptions(subscriptions)
+    
+    if new_zone:
+        await check_weather_alerts_for_single_zone(new_zone, subscriptions[new_zone])
 
 @bot.command()
 async def unsubscribe(ctx, *, location=None):
@@ -295,42 +302,45 @@ async def my_subscriptions(ctx):
     logging.info(f'{user} (ID: {user.id}) requested their list of subscriptions.')
     await ctx.send(f'{user.mention}, you are subscribed to the following counties: {", ".join(subscribed_counties)}')
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=1)
 async def check_weather_alerts():
     for county_code, data in list(subscriptions.items()):
-        zone = county_code
-        logging.debug(f'Polling NOAA API for Alert Zone {zone}.')
+        await check_weather_alerts_for_single_zone(county_code, data)
 
-        if not zone:
-            logging.info(f'County code for {county_state} has been corrupted.')
-            return
+async def check_weather_alerts_for_single_zone(county_code, data):
+    logging.debug(f'Polling NOAA API for Alert Zone {county_code}.')
 
-        response = requests.get(f'https://api.weather.gov/alerts/active?zone={zone}')
+    if not county_code:
+        logging.info(f'County code for {county_state} has been corrupted.')
+        return
 
-        if response.status_code != 200:
-            logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
-            return
+    response = requests.get(f'https://api.weather.gov/alerts/active?zone={county_code}')
 
-        logging.debug(f'NOAA API responded with code 200.')
-        new_alerts = []
-        response_data = response.json()
-        logging.debug(json.dumps(response_data, indent=4))
+    if response.status_code != 200:
+        logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
+        return
 
-        if 'features' not in response_data and len(response_data['features']) == 0:
-            return
+    logging.debug(f'NOAA API responded with code 200.')
+    new_alerts = []
+    response_data = response.json()
+    logging.debug(json.dumps(response_data, indent=4))
 
-        for feature in response_data['features']:
-            event = feature.get('properties', {}).get('event')
-            headline = feature.get('properties', {}).get('headline')
-            description = feature.get('properties', {}).get('description')
-            data = remove_existing_alert(data, response_data)
-            new_alerts = add_new_alerts(data, event, headline, description)
+    if 'features' not in response_data and len(response_data['features']) == 0:
+        return
 
-        if new_alerts:
-            await alert_subscribed_users(county_code, new_alerts)
+    for feature in response_data['features']:
+        event = feature.get('properties', {}).get('event')
+        headline = feature.get('properties', {}).get('headline')
+        description = feature.get('properties', {}).get('description')
+        data = remove_existing_alert(data, response_data)
+        new_alerts = add_new_alerts(data, event, headline, description)
 
-        subscriptions[county_code] = data
-        save_subscriptions(subscriptions)
+    if new_alerts:
+        await alert_subscribed_users(county_code, new_alerts)
+
+    subscriptions[county_code] = data
+    save_subscriptions(subscriptions)
+
 
 async def alert_user(user, county_state, alerts):
     county_code = next((county_code for county_code, data in subscriptions.items() if data['county'] + ', ' + data['state'] == county_state), None)
