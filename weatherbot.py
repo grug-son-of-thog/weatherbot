@@ -45,7 +45,7 @@ def remove_empty_subscription(county_code, data):
         logging.info(f'{county_code} has no subscribers! Removing...')
         subscriptions.pop(county_code)
 
-def add_new_alerts(data, event):
+def add_new_alerts(data, event, headline, description):
     new_alerts = []
     if event not in data['alerts']:
         data['alerts'].append(event)
@@ -112,10 +112,11 @@ async def get_noaa_zone(ctx, county, state):
         elif len(matches) > 1:
             match = await choose_subzone(ctx, matches)
         
-        else:
+        elif len(matches) == 1:
             match = matches[0]
             
         if not match:
+            await ctx.send(f'{user.mention}, Unable to find a county matching the provided values. Please try again.')
             return ['','']
 
         latitude, longitude = match[9], match[10]
@@ -124,19 +125,20 @@ async def get_noaa_zone(ctx, county, state):
 
         if response.status_code != 200:
             logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
-            return
+            return ['','']
 
         data = response.json()
 
         if 'properties' not in data or 'county' not in data['properties']:
             logging.debug(f'Failed to retrieve county information for {county_state}.')
+            return ['','']
 
         county_value = data['properties']['county']
         zone_code = county_value.split('/')[-1]
 
         return zone_code, match[3].upper()
 
-    return '', ''
+    return ['','']
 
 async def choose_subzone(ctx, matches):
     user = ctx.author
@@ -305,7 +307,7 @@ async def check_weather_alerts():
             headline = feature.get('properties', {}).get('headline')
             description = feature.get('properties', {}).get('description')
             data = remove_existing_alert(data, response_data)
-            new_alerts = add_new_alerts(data, event)
+            new_alerts = add_new_alerts(data, event, headline, description)
 
         if new_alerts:
             await alert_subscribed_users(county_code, new_alerts)
