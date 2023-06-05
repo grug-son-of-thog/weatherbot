@@ -99,7 +99,7 @@ async def get_noaa_zone(ctx, county, state):
             string_line = byte_line.decode('utf-8')
             parts = string_line.strip().split('|')
 
-            if len(parts) != 11 or parts[0].upper() != state or county not in parts[3].upper():
+            if len(parts) != 11 or parts[0].upper() != state or county not in parts[5].upper():
                 logging.debug('Line is either malformed or does not match.')
                 continue
                 
@@ -110,7 +110,7 @@ async def get_noaa_zone(ctx, county, state):
             return
         
         elif len(matches) > 1:
-            match = await choose_subzone(ctx, matches)
+            match = await choose_subzone(ctx, matches, None)
         
         elif len(matches) == 1:
             match = matches[0]
@@ -136,17 +136,24 @@ async def get_noaa_zone(ctx, county, state):
         county_value = data['properties']['county']
         zone_code = county_value.split('/')[-1]
 
-        return zone_code, match[3].upper()
+        return zone_code, match[3].upper(), match[5].upper()
 
     return ['','']
 
-async def choose_subzone(ctx, matches):
+async def choose_subzone(ctx, matches_list=None, matches_json=None):
     user = ctx.author
     option_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "0️⃣"]
     option_message = f'{user.mention}, multiple matches were found. Please select from the following choices:\n'
     
-    for i, option in enumerate(matches):
-        option_message += f'{i+1}. {option[3]} County, {option[5]}, {option[0].upper()}, {option[6]}\n'
+    if not matches_json and matches_list:
+        matches = matches_list
+        for i, option in enumerate(matches):
+            option_message += f'{i+1}. County: {option[5].upper()}, Zone: {option[3].upper()}\n'
+
+    if not matches_list and matches_json:
+        matches = matches_json
+        for i, option in enumerate(matches):
+            option_message += f"{i+1}. County: {option['county']}, Zone: {option['zone']}\n"
 
     sent_message = await ctx.send(option_message)
 
@@ -196,31 +203,32 @@ async def subscribe(ctx, *, location=None):
     county = match.group(1).strip().upper()
     state = match.group(2).strip().upper()
     county_state = f'{county}, {state}'
-    zone, county = await get_noaa_zone(ctx, county, state)
+    zone_code, zone_name, county = await get_noaa_zone(ctx, county, state)
 
     if not county:
         return
 
-    if not zone:
+    if not zone_code:
         logging.info(f'{user} (ID: {user.id}) requested subscription for {county} COUNTY {state} but it could not be found.')
-        await ctx.send(f'{user.mention}, failed to retrieve the NOAA zone for {county} COUNTY, {state}.')
+        await ctx.send(f'{user.mention}, failed to retrieve the NOAA zone code for {county} COUNTY, {state}.')
         return
 
-    if zone not in subscriptions:
-        subscriptions[zone] = {
+    if zone_code not in subscriptions:
+        subscriptions[zone_code] = {
+            'zone': zone_name,
             'county': county,
             'state': state,
             'users': [],
             'alerts': []
         }
     
-    if user.id in subscriptions[zone]['users']:
+    if user.id in subscriptions[zone_code]['users']:
         logging.info(f'{user} (ID: {user.id}) requested duplicate subscription for {county} COUNTY {state}.')
         await ctx.send(f'{user.mention}, you are already subscribed to alerts for {county} COUNTY, {state}.')
         return
 
-    subscriptions[zone]['users'].append(user.id)
-    existing_alerts = get_existing_alerts(zone)
+    subscriptions[zone_code]['users'].append(user.id)
+    existing_alerts = get_existing_alerts(zone_code)
 
     if existing_alerts:
         await alert_user(user, county_state, existing_alerts)
@@ -243,6 +251,7 @@ async def unsubscribe(ctx, *, location=None):
         
         logging.info(f'Unsubscribing {user} (ID: {user.id}) from all counties.')
         await ctx.send(f'{user.mention}, you have been unsubscribed from all counties.')
+        save_subscriptions(subscriptions)
         return
 
     match = re.match(r'^([\w\s.,/-]+),\s*([\w\s.-]+)$', location)
@@ -255,14 +264,22 @@ async def unsubscribe(ctx, *, location=None):
     county = match.group(1).strip().upper()
     state = match.group(2).strip().upper()
     county_state = f'{county}, {state}'
+    matching_subscriptions = []
     
     for county_code, data in subscriptions.items():
         if data['county'] == county and data['state'] == state and user.id in data['users']:
-            data['users'].remove(user.id)
-            logging.info(f'Unsubscribing {user} (ID: {user.id}) from alerts for {county} COUNTY, {state}.')
-            await ctx.send(f'{user.mention}, you have been unsubscribed from alerts for {county} COUNTY, {state}.')
-            save_subscriptions(subscriptions)
-            return
+            matching_subscriptions.append(data)
+            
+    if len(matching_subscriptions) > 1:
+        match = await choose_subzone(ctx, None, matching_subscriptions)
+    else:
+        match = matching_subscriptions[0]
+
+    data['users'].remove(user.id)
+    logging.info(f'Unsubscribing {user} (ID: {user.id}) from alerts for {county} COUNTY, {state}.')
+    await ctx.send(f'{user.mention}, you have been unsubscribed from alerts for {county} COUNTY, {state}.')
+    save_subscriptions(subscriptions)
+    return
 
     await ctx.send(f'{user.mention}, you are not currently subscribed to alerts for {county} COUNTY, {state}.')
 
