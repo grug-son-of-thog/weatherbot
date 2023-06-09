@@ -50,6 +50,7 @@ async def add_new_alerts(data, event, headline, description):
     if event not in data['alerts']:
         data['alerts'].append(event)
         new_alerts.append((event, headline, description))
+
     return new_alerts
 
 def remove_existing_alert(data, response_data):
@@ -101,7 +102,24 @@ async def get_noaa_zone(ctx, county, state):
             if len(parts) != 11 or parts[0].upper() != state or county not in parts[5].upper():
                 logging.debug('Line is either malformed or does not match.')
                 continue
-                
+
+            latitude, longitude = parts[9], parts[10]
+            url = f'https://api.weather.gov/points/{latitude},{longitude}'
+            response = requests.get(url)
+
+            if response.status_code != 200:
+                logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
+                return ['','','']
+
+            data = response.json()
+
+            if 'properties' not in data or 'county' not in data['properties']:
+                logging.debug(f'Failed to retrieve county information for {county_state}.')
+                return ['','','']
+
+            county_value = data['properties']['county']
+            zone_code = county_value.split('/')[-1]
+            parts.append(zone_code)
             matches.append(parts)
 
         if len(matches) > 10:
@@ -113,50 +131,54 @@ async def get_noaa_zone(ctx, county, state):
         
         elif len(matches) == 1:
             match = matches[0]
-            
+
         if not match:
             await ctx.send(f'{user.mention}, Unable to find a county matching the provided values. Please try again.')
-            return ['','']
+            return ['','','']
+        
+        if match[0] == 'Timeout':
+            logging.info(f'{user} (ID: {user.id}) did not respond to choice prompt in time.')
+            await ctx.send(f'{user.mention}, timeout exceeded. Please try again.')
+            return ['','','']
 
-        latitude, longitude = match[9], match[10]
-        url = f'https://api.weather.gov/points/{latitude},{longitude}'
-        response = requests.get(url)
-
-        if response.status_code != 200:
-            logging.info(f'Failed to retrieve data from NOAA API. Status Code: {response.status_code}')
-            return ['','']
-
-        data = response.json()
-
-        if 'properties' not in data or 'county' not in data['properties']:
-            logging.debug(f'Failed to retrieve county information for {county_state}.')
-            return ['','']
-
-        county_value = data['properties']['county']
-        zone_code = county_value.split('/')[-1]
+        zone_code = match[11]
+        print(zone_code)
 
         return zone_code, match[3].upper(), match[5].upper()
 
-    return ['','']
+    return ['','','']
 
 async def choose_subzone(ctx, matches_list=None, matches_json=None):
     user = ctx.author
     option_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "0️⃣"]
     option_message = f'{user.mention}, multiple matches were found. Please select from the following choices:\n'
+    option_zone_codes = []
+    option_trimmed_list = []
     
     if not matches_json and matches_list:
         matches = matches_list
         for i, option in enumerate(matches):
-            option_message += f'{i+1}. County: {option[5].upper()}, Zone: {option[3].upper()}\n'
+            if option[5] == option[3] and option[11] not in option_zone_codes:
+                option_message += f'{i+1}. County: {option[5]}\n'
+                option_trimmed_list.append(option)
+            elif option[11] not in option_zone_codes:
+                option_message += f'{i+1}. County: {option[5]}, Zone: {option[3]}\n'
+                option_trimmed_list.append(option)
+            option_zone_codes.append(option[11])
 
     if not matches_list and matches_json:
         matches = matches_json
         for i, option in enumerate(matches):
-            option_message += f"{i+1}. County: {option['county']}, Zone: {option['zone']}\n"
+            if option['county'] == option['zone']:
+                option_message += f"{i+1}. County: {option['county']}\n"
+                option_trimmed_list.append(option)
+            else:
+                option_message += f"{i+1}. County: {option['county']}, Zone: {option['zone']}\n"
+                option_trimmed_list.append(option)
 
     sent_message = await ctx.send(option_message)
 
-    for i in range(len(matches)):
+    for i in range(len(option_trimmed_list)):
         await sent_message.add_reaction(option_numbers[i])
 
     def check(reaction, user):
@@ -169,9 +191,7 @@ async def choose_subzone(ctx, matches_list=None, matches_json=None):
         return selected_option
 
     except asyncio.TimeoutError:
-        logging.info(f'{user} (ID: {user.id}) did not respond to choice prompt in time.')
-        await ctx.send(f'{user.mention}, timeout exceeded. Please try again.')
-        return
+        return ['Timeout']
 
 subscriptions = load_subscriptions()
 
